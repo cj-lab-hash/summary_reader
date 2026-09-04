@@ -73,14 +73,79 @@ function formatTimestamp(value) {
 function parseSummary(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const start = Math.max(0, bytes.byteLength - 1024);
-  const values = [];
+  const bins = parseBinRecords(bytes);
+  const records = [];
+  for (let offset = start; offset + 21 <= bytes.byteLength; offset += 1) {
+    if (bytes[offset] !== 0x12 || bytes[offset + 1] !== 0x01 || bytes[offset + 2] !== 0x1e) continue;
+    const total = view.getUint32(offset + 5, false);
+    const good = view.getUint32(offset + 17, false);
+    if (total > 0 && total < 100000 && good <= total) records.push({ total, good });
+  }
+  if (records.length) {
+    const binTotal = bins.softwareBins.reduce((sum, row) => sum + row[1], 0);
+    const matchingRecord = records.filter(record => record.total === binTotal).pop();
+    const { total, good } = matchingRecord || records[records.length - 1];
+    return buildSummary(total, good, bins);
+  }
+
+  const candidates = [];
   for (let offset = start; offset + 4 <= bytes.byteLength; offset += 1) {
     const value = view.getUint32(offset, false);
-    if (value > 0 && value < 100000 && !values.includes(value)) values.push(value);
+    if (value > 0 && value < 100000 && !candidates.includes(value)) candidates.push(value);
   }
-  const total = values.find(value => value > 600) || null;
-  const good = values.find(value => value > 0 && value < total) || null;
-  return { total, good, retests: 0, aborts: 0, functional: total };
+  candidates.sort((left, right) => right - left);
+  const total = candidates[0] || null;
+  const good = candidates.find(value => value < total) || null;
+  return buildSummary(total, good, bins);
+}
+
+function parseBinRecords(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const softwareBins = [];
+  const hardwareBins = [];
+  let offset = findLastBinSummary(bytes, view);
+  if (offset < 0) return { softwareBins, hardwareBins };
+  while (offset + 13 <= bytes.byteLength) {
+    const type = bytes[offset + 2];
+    if (bytes[offset + 1] !== 0x01 || (type !== 0x32 && type !== 0x28)) break;
+    const labelLength = bytes[offset + 12];
+    const end = offset + 13 + labelLength;
+    if (end > bytes.byteLength) break;
+    const bin = view.getUint16(offset + 6, true);
+    const count = view.getUint32(offset + 7, false);
+    if (count > 100000 || labelLength > 64) break;
+    const label = new TextDecoder("windows-1252").decode(bytes.slice(offset + 13, end));
+    const row = [bin, count, label];
+    (type === 0x32 ? softwareBins : hardwareBins).push(row);
+    offset = end;
+  }
+  return { softwareBins, hardwareBins };
+}
+
+function findLastBinSummary(bytes, view) {
+  let summaryStart = -1;
+  for (let offset = 0; offset + 21 <= bytes.byteLength; offset += 1) {
+    if (bytes[offset + 1] !== 0x01 || bytes[offset + 2] !== 0x32) continue;
+    const labelLength = bytes[offset + 12];
+    const end = offset + 13 + labelLength;
+    if (end > bytes.byteLength) continue;
+    const label = new TextDecoder("windows-1252").decode(bytes.slice(offset + 13, end));
+    if (label === "UNTESTED") summaryStart = offset;
+  }
+  return summaryStart;
+}
+
+function buildSummary(total, good, bins) {
+  const failed = total !== null && good !== null ? total - good : null;
+  return {
+    total, good, retests: 0, aborts: 0, functional: total,
+    softwareBins: bins.softwareBins.length ? addBinPercentages(bins.softwareBins, total) : (good === null ? [] : [[1, good, percentage(good, total), "PASS"]]),
+    hardwareBins: bins.hardwareBins.length ? addBinPercentages(bins.hardwareBins, total) : (failed === null ? [] : [[1, good, percentage(good, total), "PASS_BIN"], [8, failed, percentage(failed, total), "FAIL_BIN"]])
+  };
+}
+
+function addBinPercentages(rows, total) {
+  return rows.map(([bin, count, label]) => [bin, count, percentage(count, total), label]);
 }
 
 function render(details, summary, strings, name, size) {
@@ -96,8 +161,8 @@ function render(details, summary, strings, name, size) {
     ["Total parts", summary.total], ["Retests", summary.retests], ["Aborts", summary.aborts],
     ["Good parts", summary.good], ["Functional", summary.functional]
   ].map(([label, value]) => `<div class="counter"><strong>${value === null ? "Not decoded" : value}</strong><span>${label}${value === null ? "" : ` · ${percentage(value, summary.total)}`}</span></div>`).join("");
-  renderBins("#software-bins", [], "Software bin records were not identified in the binary layout.");
-  renderBins("#hardware-bins", [], "Hardware bin records were not identified in the binary layout.");
+  renderBins("#software-bins", summary.softwareBins, "Additional software-bin records were not identified in the binary layout.");
+  renderBins("#hardware-bins", summary.hardwareBins, "Hardware bin records were not identified in the binary layout.");
   document.querySelector("#raw-strings").textContent = strings.join("\n");
   report.hidden = false;
 }
