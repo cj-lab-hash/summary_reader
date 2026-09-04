@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STD Summary Reader</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">LOCAL FILE DECODER</p>
+        <h1>STD Summary Reader</h1>
+        <p class="subtitle">Inspect semiconductor test-run metadata and bin summaries in your browser.</p>
+      </div>
+      <label class="file-button">
+        <input id="file-input" type="file" accept=".std,.STD,application/octet-stream">
+        <span>Open .STD file</span>
+      </label>
+    </header>
+
+    <section id="state" class="state" aria-live="polite">
+      <span class="status-dot"></span>
+      <span id="state-text">Choose an .STD file to decode it locally.</span>
+    </section>
+
+    <section id="report" class="report" hidden>
+      <div class="report-heading">
+        <div>
+          <p class="eyebrow">SEDANA-STYLE VIEW</p>
+          <h2>Summary Sheet</h2>
+        </div>
+        <div id="file-meta" class="file-meta"></div>
+      </div>
+
+      <div class="content-grid">
+        <section class="panel metadata-panel">
+          <h3>Run details</h3>
+          <dl id="metadata" class="metadata"></dl>
+        </section>
+
+        <section class="panel counters-panel">
+          <h3>Total counters</h3>
+          <div id="counters" class="counter-grid"></div>
+        </section>
+      </div>
+
+      <div class="bin-grid">
+        <section class="panel">
+          <div class="panel-heading"><h3>Software binning</h3><span class="muted">decoded values</span></div>
+          <div id="software-bins"></div>
+        </section>
+        <section class="panel">
+          <div class="panel-heading"><h3>Hardware binning</h3><span class="muted">decoded values</span></div>
+          <div id="hardware-bins"></div>
+        </section>
+      </div>
+
+      <details class="raw-panel panel">
+        <summary>Raw extracted strings</summary>
+        <pre id="raw-strings"></pre>
+      </details>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
