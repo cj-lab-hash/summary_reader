@@ -88,6 +88,12 @@ function parseSummary(bytes) {
     return buildSummary(total, good, bins);
   }
 
+  const rawRun = parseRawPartRun(bytes);
+  if (rawRun) return buildSummary(rawRun.total, rawRun.good, {
+    softwareBins: rawRun.softwareBins,
+    hardwareBins: []
+  });
+
   const candidates = [];
   for (let offset = start; offset + 4 <= bytes.byteLength; offset += 1) {
     const value = view.getUint32(offset, false);
@@ -97,6 +103,54 @@ function parseSummary(bytes) {
   const total = candidates[0] || null;
   const good = candidates.find(value => value < total) || null;
   return buildSummary(total, good, bins);
+}
+
+function parseRawPartRun(bytes) {
+  const marker = new TextEncoder().encode("IMAGE_PART_ID");
+  const parts = [];
+  for (let offset = 0; offset <= bytes.length - marker.length; offset += 1) {
+    let matches = true;
+    for (let index = 0; index < marker.length; index += 1) {
+      if (bytes[offset + index] !== marker[index]) { matches = false; break; }
+    }
+    if (matches) parts.push(offset);
+  }
+  if (!parts.length) return null;
+
+  let untested = 0;
+  let good = 0;
+  for (let index = 0; index < parts.length; index += 1) {
+    const start = parts[index];
+    const end = index + 1 < parts.length ? parts[index + 1] : bytes.length;
+    const chunk = bytes.subarray(start, end);
+    if (!containsAscii(chunk, "Continuity_tests")) { untested += 1; continue; }
+    const terminal = lastBytes(chunk, [0x14, 0x14, 0x00]);
+    if (terminal && terminal[4] === 0x05) good += 1;
+  }
+  return {
+    total: parts.length,
+    good,
+    softwareBins: [[0, untested, "UNTESTED"], [1, good, "PASS"]]
+  };
+}
+
+function containsAscii(bytes, value) {
+  const needle = new TextEncoder().encode(value);
+  for (let offset = 0; offset <= bytes.length - needle.length; offset += 1) {
+    let match = true;
+    for (let index = 0; index < needle.length; index += 1) if (bytes[offset + index] !== needle[index]) { match = false; break; }
+    if (match) return true;
+  }
+  return false;
+}
+
+function lastBytes(bytes, needle) {
+  for (let offset = bytes.length - needle.length; offset >= 0; offset -= 1) {
+    let match = true;
+    for (let index = 0; index < needle.length; index += 1) if (bytes[offset + index] !== needle[index]) { match = false; break; }
+    if (match) return bytes.subarray(offset);
+  }
+  return null;
 }
 
 function parseBinRecords(bytes) {
@@ -109,12 +163,12 @@ function parseBinRecords(bytes) {
     const type = bytes[offset + 2];
     if (bytes[offset + 1] !== 0x01 || (type !== 0x32 && type !== 0x28)) break;
     const labelLength = bytes[offset + 12];
-    const end = offset + 13 + labelLength;
+    const end = offset + 14 + labelLength;
     if (end > bytes.byteLength) break;
-    const bin = view.getUint16(offset + 6, true);
+    const bin = view.getUint16(offset + 5, false);
     const count = view.getUint32(offset + 7, false);
     if (count > 100000 || labelLength > 64) break;
-    const label = new TextDecoder("windows-1252").decode(bytes.slice(offset + 13, end));
+    const label = new TextDecoder("windows-1252").decode(bytes.slice(offset + 13, offset + 13 + labelLength));
     const row = [bin, count, label];
     (type === 0x32 ? softwareBins : hardwareBins).push(row);
     offset = end;
@@ -127,9 +181,9 @@ function findLastBinSummary(bytes, view) {
   for (let offset = 0; offset + 21 <= bytes.byteLength; offset += 1) {
     if (bytes[offset + 1] !== 0x01 || bytes[offset + 2] !== 0x32) continue;
     const labelLength = bytes[offset + 12];
-    const end = offset + 13 + labelLength;
+    const end = offset + 14 + labelLength;
     if (end > bytes.byteLength) continue;
-    const label = new TextDecoder("windows-1252").decode(bytes.slice(offset + 13, end));
+    const label = new TextDecoder("windows-1252").decode(bytes.slice(offset + 13, offset + 13 + labelLength));
     if (label === "UNTESTED") summaryStart = offset;
   }
   return summaryStart;
